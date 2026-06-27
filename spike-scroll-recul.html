@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — scroll · recul</title>
+<style>
+  html,body{margin:0;background:#0d0c10;}
+  #c{position:fixed;inset:0;display:block;}
+  #sp{height:600vh;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="sp"></div>
+<script>
+// ---- a toucher ----
+const BG="#0d0c10", INK_DRY="#c9bba3", INK_WET="#f8edd4";
+const RAMP=[' ','·','░','▒','▓'];
+const FONT="ui-monospace,'Consolas','Menlo',monospace";
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR, mouse={x:-9999,y:-9999,has:false}, stars=[];
+let t0=performance.now();
+
+function lerpC(a,b,k){const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16);
+  const ar=(A>>16)&255,ag=(A>>8)&255,ab=A&255,br=(B>>16)&255,bg=(B>>8)&255,bb=B&255;
+  return[Math.round(ar+(br-ar)*k),Math.round(ag+(bg-ag)*k),Math.round(ab+(bb-ab)*k)];}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const ss=(a,b,x)=>{x=Math.max(0,Math.min(1,(x-a)/(b-a)));return x*x*(3-2*x);};
+function figure(u,v){
+  const cx=Math.abs(u-0.5);
+  const head=Math.exp(-(Math.pow((u-0.5)/0.058,2)+Math.pow((v-0.15)/0.072,2)));
+  let body=0;const top=0.23,bot=0.97;
+  if(v>=top){const tt=(v-top)/(bot-top);const hw=0.05+tt*0.205;body=ss(hw,hw*0.45,cx);}
+  let d=Math.max(head,body); d*=1-ss(0.86,1.02,v);
+  const n=0.5+0.5*Math.sin(u*26+v*38)*Math.sin(v*14+0.7); d*=0.80+0.20*n;
+  return Math.max(0,Math.min(1,d));
+}
+function init(){stars=[];for(let i=0;i<90;i++){const ang=i*2.399963,rad=Math.sqrt(i/90);
+  stars.push({x:0.5+Math.cos(ang)*rad*0.46*(0.7+Math.random()*0.5),
+              y:0.5+Math.sin(ang)*rad*0.46*(0.7+Math.random()*0.5),
+              tw:Math.random()*6.28,s:0.5+Math.random()*1.2});}}
+function fit(){DPR=Math.min(window.devicePixelRatio||1,2);W=window.innerWidth;H=window.innerHeight;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+function frame(){
+  const t=(performance.now()-t0)/1000;
+  const max=Math.max(1,document.documentElement.scrollHeight-window.innerHeight);
+  const z=Math.max(0,Math.min(1,(window.scrollY||0)/max));   // le scroll = la profondeur
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle=BG;ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H*0.5,0,W/2,H*0.5,Math.max(W,H)*0.8);
+  vg.addColorStop(0,'rgba(54,40,28,0.12)');vg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+
+  const cxp=W/2, cyp=H/2;
+  // sequence propre : figure retrecit -> point -> puis les etoiles eclosent
+  const figH=(H*0.80)*(1-ss(0,0.55,z))+H*0.05*ss(0,0.55,z);  // grande -> petite sur 0..0.55
+  const figA=1-ss(0.5,0.6,z);            // disparait une fois minuscule
+  const heroDotA=ss(0.5,0.62,z);
+  const starsA=ss(0.6,0.95,z);           // APRES la figure (pas de chevauchement)
+  const threadsA=ss(0.78,1.0,z);
+
+  if(threadsA>0.01){ctx.globalCompositeOperation='lighter';
+    for(let i=0;i<10;i++){const s=stars[i];ctx.strokeStyle=rgba([120,104,80],0.06*threadsA);ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(cxp,cyp);ctx.lineTo(s.x*W,s.y*H);ctx.stroke();}
+    ctx.globalCompositeOperation='source-over';}
+  if(starsA>0.01){ctx.globalCompositeOperation='lighter';
+    for(const s of stars){const tw=0.55+0.45*Math.sin(t*1.3+s.tw),a=starsA*tw*0.5;
+      const px=s.x*W,py=s.y*H,rr=s.s*2.2;const g=ctx.createRadialGradient(px,py,0,px,py,rr*4);
+      g.addColorStop(0,rgba([248,237,212],a));g.addColorStop(1,rgba([240,184,120],0));
+      ctx.fillStyle=g;ctx.fillRect(px-rr*4,py-rr*4,rr*8,rr*8);}
+    ctx.globalCompositeOperation='source-over';}
+
+  if(figA>0.01 && figH>22){
+    const ROWS=Math.max(10,Math.min(56,Math.round(figH/(H*0.80)*52)));
+    const fs=figH/ROWS;ctx.font=`${fs}px ${FONT}`;const cw=ctx.measureText('▓').width||fs*0.6;
+    const figW=figH*0.62,cols=Math.max(1,Math.floor(figW/cw));
+    const regX=cxp-(cols*cw)/2,regY=cyp-figH/2;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    for(let r=0;r<ROWS;r++){const v=(r+0.5)/ROWS,py=regY+r*fs+fs/2;
+      for(let c=0;c<cols;c++){const u=(c+0.5)/cols,px=regX+c*cw+cw/2;
+        const base=figure(u,v);if(base<0.05)continue;
+        let prox=0;if(mouse.has){const dx=px-mouse.x,dy=py-mouse.y,dd=Math.hypot(dx,dy);if(dd<150){prox=1-dd/150;prox*=prox;}}
+        const reveal=Math.min(1.2,0.55+prox*0.9),w=prox,d=base*reveal;
+        const idx=Math.max(0,Math.min(RAMP.length-1,Math.round(d*(RAMP.length-1)*(0.7+0.5*w))));
+        const ch=RAMP[idx];if(ch===' ')continue;
+        const ink=lerpC(INK_DRY,INK_WET,0.1+0.9*w);
+        const alpha=Math.min(1,d)*(0.5+0.45*w)*figA;if(alpha<0.02)continue;
+        ctx.fillStyle=rgba(ink,alpha);ctx.fillText(ch,px,py);
+      }}
+  }
+  if(heroDotA>0.01){const pulse=0.5+0.5*Math.sin(t*2.0);
+    const g=ctx.createRadialGradient(cxp,cyp,0,cxp,cyp,14+5*pulse);
+    g.addColorStop(0,rgba([255,247,224],0.95*heroDotA));g.addColorStop(0.4,rgba([240,184,120],0.5*heroDotA));g.addColorStop(1,rgba([240,184,120],0));
+    ctx.globalCompositeOperation='lighter';ctx.fillStyle=g;ctx.beginPath();ctx.arc(cxp,cyp,14+5*pulse,0,Math.PI*2);ctx.fill();
+    ctx.globalCompositeOperation='source-over';}
+
+  ctx.font=`400 13px ${FONT}`;ctx.textAlign='center';ctx.fillStyle='rgba(201,187,163,0.30)';
+  ctx.fillText('descendez — de la figure, jusqu’à un point parmi les points',W/2,H-26);
+  requestAnimationFrame(frame);
+}
+addEventListener('resize',fit);
+addEventListener('pointermove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.has=true;});
+addEventListener('pointerleave',()=>{mouse.has=false;});
+init();fit();requestAnimationFrame(frame);
+</script>
+</body>
+</html>

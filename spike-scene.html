@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — scene</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0d0c10;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const BG="#0d0c10", INK="#c9bba3", INK_WET="#f8edd4";
+const RAMP=[' ','·','░','▒','▓'];
+const ROWS=46, RADIUS=150, SEA=0.06;
+const FONT="ui-monospace,'Consolas','Menlo',monospace";
+// cadrages composes (le pre-rendu : camera FIXE par plan)
+const SHOTS={
+  '1':{vw:1.05, cx:0.50, cy:0.50},   // large  — la carte
+  '2':{vw:0.55, cx:0.60, cy:0.43},   // moyen
+  '3':{vw:0.28, cx:0.63, cy:0.40},   // proche — le pre-rendu
+};
+// presences (sigle + nom). la 1re est mobile.
+const stone=[0.63,0.40];
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR;
+let cam={vw:1.05,cx:0.5,cy:0.5}, tgt={...SHOTS['1']};
+let charX=0.55,charY=0.46;
+let mouse={x:-9999,y:-9999,has:false}; const keys={};
+let last=performance.now(), t0=last;
+
+function lerpC(a,b,k){const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16);
+  const ar=(A>>16)&255,ag=(A>>8)&255,ab=A&255,br=(B>>16)&255,bg=(B>>8)&255,bb=B&255;
+  return[Math.round(ar+(br-ar)*k),Math.round(ag+(bg-ag)*k),Math.round(ab+(bb-ab)*k)];}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const ss=(a,b,x)=>{x=Math.max(0,Math.min(1,(x-a)/(b-a)));return x*x*(3-2*x);};
+function land(u,w){let v=Math.sin(u*3.1+1.0)*Math.cos(w*2.7-0.5);
+  v+=0.5*Math.sin(u*6.3-2.0)*Math.cos(w*5.1+1.7);v+=0.25*Math.sin(u*12.0+0.3)*Math.cos(w*9.0-1.1);return v*0.5;}
+function decor(wx,wy){
+  if(wx<0||wx>1||wy<0||wy>1) return {d:0.14,sea:true};
+  const v=land(wx,wy); let sea=v<SEA;
+  let base = sea?0.16:0.42+Math.min(0.45,(v-SEA));
+  const dxs=(wx-stone[0])/0.022, dys=(wy-stone[1])/0.075;   // le menhir
+  const st=Math.exp(-(dxs*dxs+dys*dys)); base=Math.max(base,st*1.05); if(st>0.3)sea=false;
+  const n=0.5+0.5*Math.sin(wx*60+wy*84)*Math.sin(wy*33+0.7);
+  base*= (sea?1:0.82+0.18*n);
+  return {d:base,sea};
+}
+// sigils
+function sigA(s){ctx.beginPath();ctx.arc(0,0,s*0.6,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-s*0.6);ctx.lineTo(0,s*0.6);ctx.stroke();
+  ctx.beginPath();ctx.arc(0,-s*0.98,s*0.09,0,Math.PI*2);ctx.fill();}
+function sigB(s){ctx.beginPath();ctx.arc(0,0,s*0.6,Math.PI*0.35,Math.PI*1.65);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(s*0.52,-s*0.42);ctx.lineTo(s*0.98,-s*0.72);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(s*0.52,s*0.42);ctx.lineTo(s*0.98,s*0.72);ctx.stroke();}
+
+function fit(){DPR=Math.min(window.devicePixelRatio||1,2);W=window.innerWidth;H=window.innerHeight;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0);}
+
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000);last=now;const t=(now-t0)/1000;
+  // deplacement de la presence (dans le monde) — la camera ne suit PAS (plan fixe)
+  let mx=0,my=0;
+  if(keys['arrowleft']||keys['a'])mx-=1; if(keys['arrowright']||keys['d'])mx+=1;
+  if(keys['arrowup']||keys['w'])my-=1;   if(keys['arrowdown']||keys['s'])my+=1;
+  charX=Math.max(0,Math.min(1,charX+mx*0.16*dt)); charY=Math.max(0,Math.min(1,charY+my*0.16*dt));
+  // ease camera vers le cadrage choisi
+  cam.vw+=(tgt.vw-cam.vw)*0.12; cam.cx+=(tgt.cx-cam.cx)*0.12; cam.cy+=(tgt.cy-cam.cy)*0.12;
+  const scale=W/cam.vw;
+  const w2sx=wx=>(wx-cam.cx)*scale+W/2, w2sy=wy=>(wy-cam.cy)*scale+H/2;
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle=BG;ctx.fillRect(0,0,W,H);
+
+  // DECOR : grille char, densite echantillonnee en coords-monde
+  const fs=H/ROWS; ctx.font=`${fs}px ${FONT}`;
+  const cw=ctx.measureText('▓').width||fs*0.6; const cols=Math.ceil(W/cw);
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  const fade=Math.min(1,t/1.4);
+  for(let r=0;r<ROWS;r++){const py=r*fs+fs/2, wy=cam.cy+(py-H/2)/scale;
+    for(let c=0;c<cols;c++){const px=c*cw+cw/2, wx=cam.cx+(px-W/2)/scale;
+      const dc=decor(wx,wy); let d=dc.d;
+      if(dc.sea) d+=0.05+0.05*Math.sin(t*0.8+wx*40+wy*30);
+      let prox=0;if(mouse.has){const dx=px-mouse.x,dy=py-mouse.y,dd=Math.hypot(dx,dy);if(dd<RADIUS){prox=1-dd/RADIUS;prox*=prox;}}
+      d*=0.78+prox*0.5; const wcur=prox;
+      const idx=Math.max(0,Math.min(RAMP.length-1,Math.round(d*(RAMP.length-1))));
+      const ch=RAMP[idx]; if(ch===' ')continue;
+      const ink=lerpC(INK,INK_WET,0.05+0.7*wcur);
+      const alpha=Math.min(1,d)*(dc.sea?0.5:0.72)*(0.7+0.4*wcur)*fade;
+      if(alpha<0.02)continue;
+      ctx.fillStyle=rgba(ink,alpha);ctx.fillText(ch,px,py);
+    }}
+
+  // PRESENCES : point quand loin, sigle+nom quand proche
+  const sigAmt=ss(0.72,0.40,cam.vw), pointAmt=1-sigAmt*0.85;
+  const pres=[
+    {name:"Vael",  wx:charX,   wy:charY,   sig:sigA, wet:"#f8edd4"},
+    {name:"Ysore", wx:stone[0]+0.05, wy:stone[1], sig:sigB, wet:"#f6e2da"},
+  ];
+  // fil entre les presences (proche)
+  if(sigAmt>0.05){ctx.globalCompositeOperation='lighter';
+    ctx.strokeStyle=rgba([120,104,80],0.10*sigAmt);ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(w2sx(pres[0].wx),w2sy(pres[0].wy));ctx.lineTo(w2sx(pres[1].wx),w2sy(pres[1].wy));ctx.stroke();
+    ctx.globalCompositeOperation='source-over';}
+  for(const p of pres){
+    const sx=w2sx(p.wx), sy=w2sy(p.wy), breath=0.85+0.15*Math.sin(t*0.7);
+    // point lumineux (vu de loin)
+    if(pointAmt>0.02){const pulse=0.5+0.5*Math.sin(t*2.2);
+      ctx.globalCompositeOperation='lighter';
+      const g=ctx.createRadialGradient(sx,sy,0,sx,sy,18+5*pulse);
+      g.addColorStop(0,rgba([248,237,212],0.85*pointAmt));g.addColorStop(0.35,rgba([240,184,120],0.45*pointAmt));g.addColorStop(1,rgba([240,184,120],0));
+      ctx.fillStyle=g;ctx.beginPath();ctx.arc(sx,sy,18+5*pulse,0,Math.PI*2);ctx.fill();
+      ctx.globalCompositeOperation='source-over';}
+    // sigle + nom (vu de pres)
+    if(sigAmt>0.02){const s=Math.min(W,H)*0.05*(0.7+0.6*sigAmt);
+      ctx.save();ctx.translate(sx,sy-s*0.4);
+      ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=2;
+      ctx.strokeStyle=rgba(lerpC(INK,p.wet,0.8),sigAmt*breath);ctx.fillStyle=rgba(lerpC(INK,p.wet,0.8),sigAmt*breath);
+      ctx.shadowColor=rgba(p.wet,1);ctx.shadowBlur=10*sigAmt; p.sig(s); ctx.restore();
+      ctx.shadowBlur=0;
+      ctx.font=`400 ${s*0.6}px 'EB Garamond', Georgia, serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=rgba(lerpC(INK,p.wet,0.6),sigAmt*0.9*breath);
+      ctx.fillText(p.name,sx,sy+s*0.9);}
+  }
+
+  ctx.font=`400 13px ${FONT}`;ctx.textAlign='center';ctx.fillStyle='rgba(201,187,163,0.30)';
+  ctx.fillText('1 / 2 / 3 : cadrages (large · moyen · proche)   ·   flèches : déplacer la présence',W/2,H-26);
+  requestAnimationFrame(frame);
+}
+addEventListener('resize',fit);
+addEventListener('pointermove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.has=true;});
+addEventListener('pointerleave',()=>{mouse.has=false;});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;
+  if(SHOTS[k])tgt={...SHOTS[k]}; if(k.startsWith('arrow'))e.preventDefault();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+fit();requestAnimationFrame(frame);
+</script>
+</body>
+</html>

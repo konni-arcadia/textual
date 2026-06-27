@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — fantome</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d0c10;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const BG="#0d0c10", INK_DRY="#c9bba3", INK_WET="#f8edd4";
+const RAMP   = [' ','·','░','▒','▓'];  // espace, point median, blocs degrades
+const RADIUS = 150;    // portee du regard (px)
+const AMBIENT= 0.34;   // visibilite de la figure au repos
+const ROWS   = 48;     // resolution verticale de la grille
+const FONT   = "ui-monospace, 'Consolas', 'Menlo', monospace";
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR, cols, fs, cw, regX, regY, regW, regH, cells=[];
+let mouse={x:-9999,y:-9999,has:false};
+const t0=performance.now();
+
+function lerpC(a,b,k){const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16);
+  const ar=(A>>16)&255,ag=(A>>8)&255,ab=A&255,br=(B>>16)&255,bg=(B>>8)&255,bb=B&255;
+  return [Math.round(ar+(br-ar)*k),Math.round(ag+(bg-ag)*k),Math.round(ab+(bb-ab)*k)];}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+function smooth(a,b,x){x=Math.max(0,Math.min(1,(x-a)/(b-a)));return x*x*(3-2*x);}
+
+// champ de densite : une figure encapuchonnee, debout
+function figure(u,v){
+  const cx=Math.abs(u-0.5);
+  const head=Math.exp(-(Math.pow((u-0.5)/0.058,2)+Math.pow((v-0.15)/0.072,2)));
+  let body=0;
+  const top=0.23, bot=0.97;
+  if(v>=top){
+    const tt=(v-top)/(bot-top);
+    const hw=0.05+tt*0.205;                 // epaules -> ourlet de la robe
+    body=smooth(hw, hw*0.45, cx);           // 1 au centre, bord doux
+  }
+  let d=Math.max(head, body);
+  d*= 1-smooth(0.86,1.02,v);                 // l'ourlet se dissout dans l'encre
+  const n=0.5+0.5*Math.sin(u*26+v*38)*Math.sin(v*14+0.7);
+  d*= 0.80+0.20*n;                           // grain interne (stipple)
+  return Math.max(0,Math.min(1,d));
+}
+
+function fit(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=window.innerWidth; H=window.innerHeight;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  layout();
+}
+function layout(){
+  regH=H*0.80; fs=regH/ROWS;
+  ctx.font=`${fs}px ${FONT}`;
+  cw=ctx.measureText('▓').width||fs*0.6;
+  regW=regH*0.62; cols=Math.max(1,Math.floor(regW/cw)); regW=cols*cw;
+  regX=(W-regW)/2; regY=(H-regH)/2;
+  cells=[];
+  for(let r=0;r<ROWS;r++){
+    const v=(r+0.5)/ROWS;
+    for(let c=0;c<cols;c++){
+      const u=(c+0.5)/cols, d=figure(u,v);
+      if(d>0.05) cells.push({d, px:regX+c*cw+cw/2, py:regY+r*fs+fs/2});
+    }
+  }
+}
+
+function frame(now){
+  const t=(now-t0)/1000;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H*0.5,0,W/2,H*0.5,Math.max(W,H)*0.75);
+  vg.addColorStop(0,'rgba(54,40,28,0.14)'); vg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+
+  const fade=Math.min(1,t/1.6), breath=0.9+0.1*Math.sin(t*0.6);
+  ctx.font=`${fs}px ${FONT}`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const cell of cells){
+    let prox=0;
+    if(mouse.has){
+      const dx=cell.px-mouse.x, dy=cell.py-mouse.y, dd=Math.hypot(dx,dy);
+      if(dd<RADIUS){ prox=1-dd/RADIUS; prox*=prox; }
+    }
+    const reveal=Math.min(1.25, AMBIENT+prox*0.95);
+    const d=cell.d*reveal, w=prox;
+    const idx=Math.max(0,Math.min(RAMP.length-1, Math.round(d*(RAMP.length-1)*(0.7+0.5*w))));
+    const ch=RAMP[idx];
+    if(ch===' ') continue;
+    const ink=lerpC(INK_DRY,INK_WET,0.1+0.9*w);
+    const alpha=Math.min(1,d)*(0.42+0.5*w)*fade*breath;
+    if(alpha<0.02) continue;
+    if(w>0.01){ ctx.shadowColor=rgba(ink,1); ctx.shadowBlur=1.5+w*5; } else ctx.shadowBlur=0;
+    ctx.fillStyle=rgba(ink,alpha);
+    ctx.fillText(ch, cell.px, cell.py);
+  }
+  ctx.shadowBlur=0;
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', fit);
+addEventListener('pointermove', e=>{mouse.x=e.clientX; mouse.y=e.clientY; mouse.has=true;});
+addEventListener('pointerleave', ()=>{mouse.has=false;});
+fit(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

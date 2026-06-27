@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — matiere</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0d0c10;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const PHRASE = "Il y avait une lumiere, et elle se souvenait de nous.";
+const FONT   = "'EB Garamond', Georgia, serif";
+const INK_DRY = "#c9bba3";   // encre seche, au repos
+const INK_WET = "#f8edd4";   // encre riche, sous le regard
+const BG      = "#0d0c10";
+const RADIUS  = 120;   // portee du regard (px)
+const BLEED   = 12;    // ampleur de la bavure d'encre sous le regard
+const WEIGHT  = 1.9;   // epaississement du trait sous le regard
+// -------------------
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W, H, DPR, grain;
+let letters = [];
+let mouse = {x:-9999, y:-9999, has:false};
+const t0 = performance.now();
+
+function lerpC(a,b,k){
+  const A=parseInt(a.slice(1),16), B=parseInt(b.slice(1),16);
+  const ar=(A>>16)&255, ag=(A>>8)&255, ab=A&255;
+  const br=(B>>16)&255, bg=(B>>8)&255, bb=B&255;
+  return [Math.round(ar+(br-ar)*k), Math.round(ag+(bg-ag)*k), Math.round(ab+(bb-ab)*k)];
+}
+const rgba = (c,a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const easeOut = x => 1 - Math.pow(1-x, 3);
+
+function buildGrain(){
+  const g = document.createElement('canvas'); g.width = g.height = 160;
+  const gx = g.getContext('2d'), id = gx.createImageData(160,160);
+  for(let i=0;i<id.data.length;i+=4){ const v = 190 + Math.random()*65; id.data[i]=id.data[i+1]=id.data[i+2]=v; id.data[i+3]=255; }
+  gx.putImageData(id,0,0);
+  grain = ctx.createPattern(g,'repeat');
+}
+
+function fit(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  cv.style.width = W+'px'; cv.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  if(!grain) buildGrain();
+  layout();
+}
+
+function layout(){
+  let size = Math.min(H*0.14, 64);
+  ctx.font = `400 ${size}px ${FONT}`;
+  let w = ctx.measureText(PHRASE).width;
+  const maxW = W*0.82;
+  if(w > maxW){ size *= maxW/w; ctx.font = `400 ${size}px ${FONT}`; w = ctx.measureText(PHRASE).width; }
+  const startX = (W - w)/2, baseY = H*0.5;
+  letters = [];
+  let x = startX;
+  for(let i=0;i<PHRASE.length;i++){
+    const ch = PHRASE[i], cw = ctx.measureText(ch).width;
+    letters.push({ ch, size, x:x+cw/2, y:baseY, phase:i*0.6, appear:i*0.05 });
+    x += cw;
+  }
+}
+
+function frame(now){
+  const t = (now - t0)/1000;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+
+  // fond + vignettage chaud
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = BG; ctx.fillRect(0,0,W,H);
+  const vg = ctx.createRadialGradient(W/2,H*0.5,0, W/2,H*0.5, Math.max(W,H)*0.75);
+  vg.addColorStop(0,'rgba(54,40,28,0.16)'); vg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+
+  for(const L of letters){
+    const ap = easeOut(Math.max(0, Math.min(1, (t - L.appear)/1.0)));
+    if(ap <= 0) continue;
+    let infl = 0;
+    if(mouse.has){
+      const dx = L.x-mouse.x, dy = L.y-mouse.y, d = Math.hypot(dx,dy);
+      if(d < RADIUS){ infl = 1 - d/RADIUS; infl *= infl; }
+    }
+    const breath = Math.sin(t*0.7 + L.phase)*0.5 + 0.5;     // l'encre respire
+    const k = Math.min(1, 0.12 + breath*0.06 + infl*0.92);  // sec -> mouille
+    const ink = lerpC(INK_DRY, INK_WET, k);
+    const alpha = ap*(0.6 + 0.34*infl);
+    const bleed = 2 + breath*1.0 + infl*BLEED + (1-ap)*16;  // bave, et "seche" a l'apparition
+    const weight = 0.3 + breath*0.15 + infl*WEIGHT;
+
+    ctx.save();
+    ctx.translate(L.x, L.y);
+    ctx.font = `400 ${L.size}px ${FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // bavure d'encre (couche basse)
+    ctx.shadowColor = rgba(ink,1); ctx.shadowBlur = bleed;
+    ctx.fillStyle = rgba(ink, 0.32*alpha);
+    ctx.fillText(L.ch, 0, 0);
+    ctx.shadowBlur = 0;
+    // epaisseur du trait
+    ctx.lineJoin = 'round'; ctx.lineWidth = weight;
+    ctx.strokeStyle = rgba(ink, alpha);
+    ctx.strokeText(L.ch, 0, 0);
+    // encre nette
+    ctx.fillStyle = rgba(ink, alpha);
+    ctx.fillText(L.ch, 0, 0);
+    ctx.restore();
+  }
+
+  // grain de papier
+  if(grain){
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = 0.05;
+    ctx.fillStyle = grain; ctx.fillRect(0,0,W,H);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  }
+
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', fit);
+addEventListener('pointermove', e => { mouse.x=e.clientX; mouse.y=e.clientY; mouse.has=true; });
+addEventListener('pointerleave', () => { mouse.has=false; });
+fit();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

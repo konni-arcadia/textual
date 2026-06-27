@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — perso</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d0c10;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const BG="#0d0c10", INK_DRY="#c9bba3", INK_WET="#f8edd4";
+const RAMP   = [' ','·','░','▒','▓'];
+const RADIUS = 150;    // portee du regard (la souris mouille l'encre)
+const AMBIENT= 0.62;   // presence du perso au repos
+const ROWS   = 50;     // finesse de la grille
+const FONT   = "ui-monospace, 'Consolas', 'Menlo', monospace";
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR,Hf,rootY;
+let posX=0, vx=0, faceDir=1, p=0;
+let mouse={x:-9999,y:-9999,has:false};
+const keys={};
+let last=performance.now(), t0=last;
+
+function lerpC(a,b,k){const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16);
+  const ar=(A>>16)&255,ag=(A>>8)&255,ab=A&255,br=(B>>16)&255,bg=(B>>8)&255,bb=B&255;
+  return [Math.round(ar+(br-ar)*k),Math.round(ag+(bg-ag)*k),Math.round(ab+(bb-ab)*k)];}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+function smooth(a,b,x){x=Math.max(0,Math.min(1,(x-a)/(b-a)));return x*x*(3-2*x);}
+function segDist(px,py,ax,ay,bx,by){
+  const vX=bx-ax,vY=by-ay,wX=px-ax,wY=py-ay, c1=vX*wX+vY*wY;
+  if(c1<=0) return Math.hypot(px-ax,py-ay);
+  const c2=vX*vX+vY*vY; if(c2<=c1) return Math.hypot(px-bx,py-by);
+  const tt=c1/c2; return Math.hypot(px-(ax+tt*vX), py-(ay+tt*vY));
+}
+// cinematique directe d'un membre 2 segments (coords corps, y vers le haut)
+function limb(rx,ry,a1,l1,a2,l2){
+  const jx=rx+l1*Math.sin(a1), jy=ry-l1*Math.cos(a1), a=a1+a2;
+  return {jx,jy, ex:jx+l2*Math.sin(a), ey:jy-l2*Math.cos(a)};
+}
+
+function fit(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=window.innerWidth; H=window.innerHeight;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  Hf=H*0.42; rootY=H*0.52;
+  if(posX===0) posX=W*0.5;
+}
+
+function buildCapsules(bob){
+  const ws=Math.min(1,Math.abs(vx)/(W*0.16));     // 0 immobile -> 1 plein pas
+  const stride=0.55*ws, armSw=0.5*ws;
+  const idleSway=(1-ws)*0.05*Math.sin((performance.now()-t0)/1000*1.4);
+  // angles
+  const thighL= stride*Math.sin(p),           thighR= stride*Math.sin(p+Math.PI);
+  const kneeL = 0.15+0.7*Math.max(0,Math.sin(p+Math.PI*0.5));
+  const kneeR = 0.15+0.7*Math.max(0,Math.sin(p+Math.PI*1.5));
+  const shoL  = -armSw*Math.sin(p)+idleSway,  shoR= -armSw*Math.sin(p+Math.PI)-idleSway;
+  const elbL  = 0.25+0.2*Math.max(0,Math.sin(p)), elbR=0.25+0.2*Math.max(0,Math.sin(p+Math.PI));
+  // joints en coords corps
+  const Lsh=[-0.10,0.30], Rsh=[0.10,0.30], Lhip=[-0.055,0], Rhip=[0.055,0];
+  const aL=limb(Lsh[0],Lsh[1],shoL,0.16,elbL,0.15);
+  const aR=limb(Rsh[0],Rsh[1],shoR,0.16,elbR,0.15);
+  const lL=limb(Lhip[0],Lhip[1],thighL,0.22,kneeL,0.22);
+  const lR=limb(Rhip[0],Rhip[1],thighR,0.22,kneeR,0.22);
+  const B=[
+    [[0,0],[0,0.30],0.085],            // torse
+    [Lhip,Rhip,0.065],                 // bassin
+    [[0,0.37],[0,0.47],0.085],         // tete
+    [[0,0.30],[0,0.37],0.04],          // cou
+    [Lsh,[aL.jx,aL.jy],0.045],[[aL.jx,aL.jy],[aL.ex,aL.ey],0.035],
+    [Rsh,[aR.jx,aR.jy],0.045],[[aR.jx,aR.jy],[aR.ex,aR.ey],0.035],
+    [Lhip,[lL.jx,lL.jy],0.06],[[lL.jx,lL.jy],[lL.ex,lL.ey],0.05],
+    [Rhip,[lR.jx,lR.jy],0.06],[[lR.jx,lR.jy],[lR.ex,lR.ey],0.05],
+  ];
+  // -> ecran
+  return B.map(seg=>({
+    ax:posX+seg[0][0]*Hf*faceDir, ay:rootY-seg[0][1]*Hf+bob,
+    bx:posX+seg[1][0]*Hf*faceDir, by:rootY-seg[1][1]*Hf+bob,
+    r:seg[2]*Hf,
+  }));
+}
+
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const t=(now-t0)/1000;
+
+  // controles
+  let dir=0;
+  if(keys['arrowleft']||keys['a']) dir-=1;
+  if(keys['arrowright']||keys['d']) dir+=1;
+  if(dir!==0) faceDir=dir>0?1:-1;
+  vx += (dir*W*0.16 - vx)*0.16;
+  posX += vx*dt;
+  posX=Math.max(Hf*0.5, Math.min(W-Hf*0.5, posX));
+  const ws=Math.min(1,Math.abs(vx)/(W*0.16));
+  p += dt*(2+8*ws);
+  const bob = -Math.abs(Math.sin(p))*Hf*0.02*ws + Math.sin(t*0.8)*Hf*0.005*(1-ws);
+
+  // fond
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H*0.5,0,W/2,H*0.5,Math.max(W,H)*0.75);
+  vg.addColorStop(0,'rgba(54,40,28,0.14)'); vg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+
+  // ombre au sol
+  const footY=rootY+0.46*Hf;
+  const sg=ctx.createRadialGradient(posX,footY,0,posX,footY,Hf*0.22);
+  sg.addColorStop(0,'rgba(0,0,0,0.45)'); sg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=sg; ctx.save(); ctx.translate(posX,footY); ctx.scale(1,0.28);
+  ctx.beginPath(); ctx.arc(0,0,Hf*0.22,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // capsules -> grille char
+  const caps=buildCapsules(bob);
+  const regW=Hf*1.0, regH=Hf*1.15;
+  const fs=regH/ROWS;
+  ctx.font=`${fs}px ${FONT}`;
+  const cw=ctx.measureText('▓').width||fs*0.6;
+  const cols=Math.max(1,Math.floor(regW/cw));
+  const regX=posX-(cols*cw)/2, regY=rootY-Hf*0.58+bob;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const fade=Math.min(1,t/1.2);
+
+  for(let r=0;r<ROWS;r++){
+    const py=regY+r*fs+fs/2;
+    for(let c=0;c<cols;c++){
+      const px=regX+c*cw+cw/2;
+      let fill=0;
+      for(const s of caps){
+        const dist=segDist(px,py,s.ax,s.ay,s.bx,s.by);
+        if(dist<s.r){ const f=smooth(s.r,s.r*0.45,dist); if(f>fill) fill=f; }
+      }
+      if(fill<0.05) continue;
+      const nbx=(px-posX)/Hf, nby=(rootY-py)/Hf;
+      const n=0.5+0.5*Math.sin(nbx*26+nby*38)*Math.sin(nby*14+0.7);
+      let d=fill*(0.82+0.18*n);
+      let prox=0;
+      if(mouse.has){ const dx=px-mouse.x,dy=py-mouse.y,dd=Math.hypot(dx,dy);
+        if(dd<RADIUS){ prox=1-dd/RADIUS; prox*=prox; } }
+      const reveal=Math.min(1.2,AMBIENT+prox*0.9), w=prox;
+      const dd=d*reveal;
+      const idx=Math.max(0,Math.min(RAMP.length-1,Math.round(dd*(RAMP.length-1)*(0.7+0.5*w))));
+      const ch=RAMP[idx]; if(ch===' ') continue;
+      const ink=lerpC(INK_DRY,INK_WET,0.1+0.9*w);
+      const alpha=Math.min(1,dd)*(0.5+0.45*w)*fade;
+      if(alpha<0.02) continue;
+      if(w>0.01){ ctx.shadowColor=rgba(ink,1); ctx.shadowBlur=1.5+w*5; } else ctx.shadowBlur=0;
+      ctx.fillStyle=rgba(ink,alpha);
+      ctx.fillText(ch,px,py);
+    }
+  }
+  ctx.shadowBlur=0;
+
+  // aide
+  ctx.font=`400 13px ui-monospace, monospace`; ctx.textAlign='center';
+  ctx.fillStyle='rgba(201,187,163,0.28)';
+  ctx.fillText('←  →  ou  A / D  pour marcher  ·  la souris mouille l’encre', W/2, H-26);
+
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', fit);
+addEventListener('pointermove', e=>{mouse.x=e.clientX; mouse.y=e.clientY; mouse.has=true;});
+addEventListener('pointerleave', ()=>{mouse.has=false;});
+addEventListener('keydown', e=>{ const k=e.key.toLowerCase(); keys[k]=true;
+  if(['arrowleft','arrowright'].includes(k)) e.preventDefault(); });
+addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+fit(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

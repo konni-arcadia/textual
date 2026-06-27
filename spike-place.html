@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — place</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0a10;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const BG="#0b0a10";
+const GROUND=[98,94,90], WALL=[150,140,120], ROOF=[176,150,120], WARM=[255,200,130];
+const RAMP=[' ','·',':','░','▒','▓'];
+const GW=16, GH=16;
+const buildings=[
+  {x:1,y:1,w:3,d:3,h:4,lit:1},{x:6,y:1,w:4,d:2,h:3,lit:1},{x:11,y:1,w:4,d:3,h:5,lit:0},
+  {x:1,y:6,w:2,d:4,h:3,lit:1},{x:12.5,y:6,w:3,d:4,h:4,lit:1},
+  {x:1,y:12.5,w:4,d:3,h:3,lit:0},{x:6.5,y:13,w:3,d:2,h:4,lit:1},{x:12,y:12,w:3,d:3,h:5,lit:1},
+];
+const lanterns=[[8,8],[5,11],[11,5]];   // au sol, sur la place
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR, tileW,tileH,hS, oX,oY, scene, glows=[];
+let cx=8, cy=11.5, mouse={x:-9999,y:-9999,has:false}; const keys={};
+let last=performance.now(), t0=last;
+
+function rgba(c,a){return `rgba(${c[0]},${c[1]},${c[2]},${a})`;}
+function proj(wx,wy,h){return [oX+(wx-wy)*tileW/2, oY+(wx+wy)*tileH/2 - h*hS];}
+function inTri(px,py,a,b,c){const d1=(px-b[0])*(a[1]-b[1])-(a[0]-b[0])*(py-b[1]);
+  const d2=(px-c[0])*(b[1]-c[1])-(b[0]-c[0])*(py-c[1]);const d3=(px-a[0])*(c[1]-a[1])-(c[0]-a[0])*(py-a[1]);
+  const neg=(d1<0)||(d2<0)||(d3<0),pos=(d1>0)||(d2>0)||(d3>0);return !(neg&&pos);}
+function inQuad(px,py,P){return inTri(px,py,P[0],P[1],P[2])||inTri(px,py,P[0],P[2],P[3]);}
+
+function fillQuad(g,P,shade,ink){
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  for(const p of P){minx=Math.min(minx,p[0]);maxx=Math.max(maxx,p[0]);miny=Math.min(miny,p[1]);maxy=Math.max(maxy,p[1]);}
+  const fs=Math.max(8,H/56),cw=g.measureText('▓').width||fs*0.6;
+  g.textAlign='center';g.textBaseline='middle';
+  for(let y=Math.floor(miny/fs)*fs+fs/2;y<maxy;y+=fs)
+    for(let x=Math.floor(minx/cw)*cw+cw/2;x<maxx;x+=cw){
+      if(!inQuad(x,y,P))continue;
+      const n=0.5+0.5*Math.sin(x*0.6+y*0.4)*Math.sin(y*0.25+1.0);
+      const d=shade*(0.82+0.18*n);
+      const ch=RAMP[Math.max(0,Math.min(RAMP.length-1,Math.round(d*(RAMP.length-1))))];
+      if(ch===' ')continue; g.fillStyle=rgba(ink,Math.min(1,d)); g.fillText(ch,x,y);
+    }
+}
+function edge(g,P){g.strokeStyle='rgba(10,9,13,0.55)';g.lineWidth=1.2;g.beginPath();
+  g.moveTo(P[0][0],P[0][1]);for(let i=1;i<P.length;i++)g.lineTo(P[i][0],P[i][1]);g.closePath();g.stroke();}
+
+function lerp2(A,B,u){return [A[0]+(B[0]-A[0])*u, A[1]+(B[1]-A[1])*u];}
+
+function buildScene(){
+  scene=document.createElement('canvas'); scene.width=W*DPR; scene.height=H*DPR;
+  const g=scene.getContext('2d'); g.setTransform(DPR,0,0,DPR,0,0);
+  const fs=Math.max(8,H/56); g.font=`${fs}px ui-monospace,'Consolas',monospace`;
+  // sol (la place pavee)
+  fillQuad(g,[proj(0,0,0),proj(GW,0,0),proj(GW,GH,0),proj(0,GH,0)],0.34,GROUND);
+  glows=[];
+  // batiments tries du fond vers l'avant
+  const bs=[...buildings].sort((a,b)=>(a.x+a.w/2+a.y+a.d/2)-(b.x+b.w/2+b.y+b.d/2));
+  for(const b of bs){
+    const {x,y,w,d,h,lit}=b;
+    const east=[proj(x+w,y,0),proj(x+w,y+d,0),proj(x+w,y+d,h),proj(x+w,y,h)];   // face +x (droite)
+    const south=[proj(x,y+d,0),proj(x+w,y+d,0),proj(x+w,y+d,h),proj(x,y+d,h)];  // face +y (gauche)
+    const roof=[proj(x,y,h),proj(x+w,y,h),proj(x+w,y+d,h),proj(x,y+d,h)];
+    fillQuad(g,east,0.34,WALL); fillQuad(g,south,0.52,WALL); fillQuad(g,roof,0.72,ROOF);
+    edge(g,east);edge(g,south);edge(g,roof);
+    if(lit){ // fenetres sur la face sud (face a la camera)
+      const A=south[0],B=south[1],D=south[3];
+      for(const u of [0.25,0.55,0.85]) for(const v of [0.34,0.68]){
+        const p=lerp2(lerp2(A,B,u),lerp2(D,lerp2(D,B,1)[0]?D:D,u),0); // base point
+        const px=A[0]+(B[0]-A[0])*u+(D[0]-A[0])*v, py=A[1]+(B[1]-A[1])*u+(D[1]-A[1])*v;
+        g.fillStyle=rgba([255,230,180],0.8); g.fillRect(px-3,py-4,6,7);   // carreau
+        glows.push({x:px,y:py,r:18,base:0.5});
+      }
+    }
+  }
+  for(const[lx,ly] of lanterns){const p=proj(lx,ly,0.2); glows.push({x:p[0],y:p[1],r:30,base:0.6,ground:1});
+    g.fillStyle=rgba([60,52,40],1);g.beginPath();g.arc(p[0],p[1],2,0,Math.PI*2);g.fill();}
+}
+
+function fit(){DPR=Math.min(window.devicePixelRatio||1,2);W=window.innerWidth;H=window.innerHeight;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0);
+  tileW=Math.min(W*0.052,H*0.072); tileH=tileW*0.5; hS=tileH*0.9;
+  oX=W/2; oY=H*0.30; buildScene();}
+
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000);last=now;const t=(now-t0)/1000;
+  let mx=0,my=0;
+  if(keys['arrowleft']||keys['a'])mx-=1; if(keys['arrowright']||keys['d'])mx+=1;
+  if(keys['arrowup']||keys['w'])my-=1;   if(keys['arrowdown']||keys['s'])my+=1;
+  // deplacement iso : haut = s'eloigner en diagonale
+  const sp=4*dt; cx=Math.max(0.4,Math.min(GW-0.4,cx+(mx+my)*sp*0.7)); cy=Math.max(0.4,Math.min(GH-0.4,cy+(my-mx)*sp*0.7));
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle=BG;ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H*0.42,0,W/2,H*0.42,Math.max(W,H)*0.7);
+  vg.addColorStop(0,'rgba(40,36,30,0.20)');vg.addColorStop(1,'rgba(0,0,0,0.25)');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  ctx.drawImage(scene,0,0,W,H);
+
+  // lumieres chaudes (vacillantes) par-dessus le decor statique
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<glows.length;i++){const gl=glows[i];
+    const fl=0.75+0.25*Math.sin(t*4+i*1.3);
+    const g=ctx.createRadialGradient(gl.x,gl.y,0,gl.x,gl.y,gl.r);
+    g.addColorStop(0,rgba(WARM,gl.base*fl));g.addColorStop(0.4,rgba([240,160,90],gl.base*0.5*fl));g.addColorStop(1,rgba([240,160,90],0));
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(gl.x,gl.y,gl.r,0,Math.PI*2);ctx.fill();}
+  ctx.globalCompositeOperation='source-over';
+
+  // la presence sur la place
+  const pp=proj(cx,cy,0), pulse=0.5+0.5*Math.sin(t*2.2);
+  ctx.globalCompositeOperation='lighter';
+  const g=ctx.createRadialGradient(pp[0],pp[1],0,pp[0],pp[1],22+5*pulse);
+  g.addColorStop(0,rgba([248,237,212],0.85));g.addColorStop(0.4,rgba(WARM,0.4));g.addColorStop(1,rgba(WARM,0));
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(pp[0],pp[1],22+5*pulse,0,Math.PI*2);ctx.fill();
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=rgba([255,247,224],0.95);ctx.beginPath();ctx.arc(pp[0],pp[1],2.6,0,Math.PI*2);ctx.fill();
+
+  ctx.font=`400 13px ui-monospace,monospace`;ctx.textAlign='center';ctx.fillStyle='rgba(150,140,120,0.32)';
+  ctx.fillText('flèches / WASD : traverser la place  ·  caméra fixe, en plongée (façon pré-rendu)',W/2,H-26);
+  requestAnimationFrame(frame);
+}
+addEventListener('resize',fit);
+addEventListener('pointermove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.has=true;});
+addEventListener('pointerleave',()=>{mouse.has=false;});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if(k.startsWith('arrow'))e.preventDefault();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+fit();requestAnimationFrame(frame);
+</script>
+</body>
+</html>

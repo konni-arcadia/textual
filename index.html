@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Théâtre d'encre — expériences</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#efe6d6;--dim:#a99e88;--warm:#f0b878;--bg:#0d0c10;--card:#15131a;--line:#2a2730;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:'EB Garamond',Georgia,serif;}
+  body{padding:7vh 6vw 12vh;}
+  header{max-width:760px;margin:0 auto 6vh;}
+  h1{font-weight:500;font-size:clamp(32px,5vw,52px);margin:0 0 .3em;letter-spacing:.01em;}
+  .lede{color:var(--dim);font-style:italic;font-size:clamp(16px,2.2vw,21px);line-height:1.5;margin:0;}
+  .lede b{color:var(--ink);font-style:normal;font-weight:500;}
+  section{max-width:1100px;margin:0 auto;}
+  h2{font-weight:500;font-size:22px;color:var(--warm);border-bottom:1px solid var(--line);
+     padding-bottom:.4em;margin:5vh 0 1.4em;letter-spacing:.02em;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px;}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:18px 20px;transition:border-color .2s,transform .2s,background .2s;}
+  a.card:hover{border-color:var(--warm);transform:translateY(-2px);background:#191620;}
+  .card .t{font-size:20px;font-weight:500;margin-bottom:.25em;}
+  .card .d{color:var(--dim);font-size:15px;line-height:1.45;font-style:italic;}
+  .card .f{font-family:ui-monospace,Consolas,monospace;font-style:normal;font-size:12px;color:#6c6578;margin-top:.7em;}
+  .feat a.card{background:linear-gradient(180deg,#1a1622,#141019);}
+  footer{max-width:760px;margin:10vh auto 0;color:#6c6578;font-size:14px;line-height:1.6;}
+  footer a{color:var(--dim);}
+</style>
+</head>
+<body>
+<header>
+  <h1>Théâtre d'encre</h1>
+  <p class="lede">Des expériences de récit faites de <b>rien que des caractères</b> — HTML et Canvas purs, sans dépendances, sans assets. Nées d'une conversation, un soir. Passez la souris, appuyez sur les flèches, descendez à la molette. <b>Le son démarre au premier clic.</b></p>
+</header>
+
+<section>
+  <h2>Scènes jouées</h2>
+  <div class="grid feat">
+    <a class="card" href="wang-fo.html"><div class="t">Comment Wang-Fô fut sauvé</div><div class="d">D'après Yourcenar. Portraits, musique pentatonique, et un peintre qui s'échappe dans son tableau.</div><div class="f">wang-fo.html</div></a>
+    <a class="card" href="shakespeare.html"><div class="t">Roméo & Juliette — II.2</div><div class="d">La scène du balcon. Jardin de nuit, textbox, musique synthétisée, recul vers les étoiles.</div><div class="f">shakespeare.html</div></a>
+    <a class="card" href="trailer.html"><div class="t">Les Mille Souvenirs</div><div class="d">Un mini-trailer JRPG : carte, décor peint, perspective, dialogue, constellation.</div><div class="f">trailer.html</div></a>
+  </div>
+</section>
+
+<section>
+  <h2>Décors</h2>
+  <div class="grid">
+    <a class="card" href="spike-clairiere.html"><div class="t">Clairière</div><div class="d">Fond peint au crépuscule — l'encre comme valeur tonale.</div><div class="f">spike-clairiere.html</div></a>
+    <a class="card" href="spike-donjon.html"><div class="t">Donjon</div><div class="d">Couloir de pierre en fausse perspective, torches qui reculent.</div><div class="f">spike-donjon.html</div></a>
+    <a class="card" href="spike-ruelle.html"><div class="t">Ruelle</div><div class="d">Le même moteur, dehors : façades, lanternes, une porte au fond.</div><div class="f">spike-ruelle.html</div></a>
+    <a class="card" href="spike-place.html"><div class="t">Place</div><div class="d">Diorama isométrique, caméra fixe en plongée.</div><div class="f">spike-place.html</div></a>
+    <a class="card" href="spike-village.html"><div class="t">Village</div><div class="d">Parallax en couches — la première tentative, plus brute.</div><div class="f">spike-village.html</div></a>
+  </div>
+</section>
+
+<section>
+  <h2>Échelles & caméras</h2>
+  <div class="grid">
+    <a class="card" href="spike-carte.html"><div class="t">Carte</div><div class="d">Vue overworld, le personnage réduit à un point de lumière.</div><div class="f">spike-carte.html</div></a>
+    <a class="card" href="spike-scene.html"><div class="t">Scène</div><div class="d">Cadrages variables (large / proche), façon pré-rendu.</div><div class="f">spike-scene.html</div></a>
+    <a class="card" href="spike-recul.html"><div class="t">Recul</div><div class="d">De la figure jusqu'à une constellation — l'échelle comme émotion.</div><div class="f">spike-recul.html</div></a>
+    <a class="card" href="spike-scroll-marche.html"><div class="t">Scroll · marche</div><div class="d">La molette comme projecteur : on fait marcher la figure.</div><div class="f">spike-scroll-marche.html</div></a>
+    <a class="card" href="spike-scroll-recul.html"><div class="t">Scroll · recul</div><div class="d">Défilement-cinéma, version propre du recul.</div><div class="f">spike-scroll-recul.html</div></a>
+  </div>
+</section>
+
+<section>
+  <h2>Présences</h2>
+  <div class="grid">
+    <a class="card" href="spike-marque.html"><div class="t">Marque</div><div class="d">Personnages-sigles : un signe, un nom, une présence.</div><div class="f">spike-marque.html</div></a>
+    <a class="card" href="spike-fantome.html"><div class="t">Fantôme</div><div class="d">Une figure en caractères qui se révèle sous le regard.</div><div class="f">spike-fantome.html</div></a>
+    <a class="card" href="spike-perso.html"><div class="t">Perso</div><div class="d">Squelette articulé en char-encre, qui marche (flèches).</div><div class="f">spike-perso.html</div></a>
+  </div>
+</section>
+
+<section>
+  <h2>Matière du texte</h2>
+  <div class="grid">
+    <a class="card" href="spike-fremir.html"><div class="t">Frémir</div><div class="d">Les lettres s'écartent et s'allument sous le curseur.</div><div class="f">spike-fremir.html</div></a>
+    <a class="card" href="spike-matiere.html"><div class="t">Matière</div><div class="d">L'encre se mouille là où le regard se pose.</div><div class="f">spike-matiere.html</div></a>
+  </div>
+</section>
+
+<footer>
+  Tout est en HTML/Canvas sans dépendance — clonez, ouvrez, modifiez. La police EB Garamond est chargée depuis Google Fonts ; le reste tient dans chaque fichier.
+</footer>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — village</title>
+<style>
+  html,body{margin:0;height:100%;background:#0c0b12;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const BG="#0c0b12", INK="#c9bba3", WARM=[245,200,130];
+const RAMP=[' ','·','░','▒','▓'];
+const FONT="ui-monospace,'Consolas','Menlo',monospace";
+const SP=240;          // espacement des maisons (monde px)
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR,horizonY, charX=0, mouse={x:-9999,y:-9999,has:false}; const keys={};
+let last=performance.now(), t0=last, vx=0;
+
+function rgba(c,a){return `rgba(${c[0]},${c[1]},${c[2]},${a})`;}
+function lerpC(a,b,k){const A=parseInt(a.slice(1),16);const ar=(A>>16)&255,ag=(A>>8)&255,ab=A&255;
+  return[Math.round(ar+(b[0]-ar)*k),Math.round(ag+(b[1]-ag)*k),Math.round(ab+(b[2]-ab)*k)];}
+const hash=i=>{const x=Math.sin(i*12.9898)*43758.5453;return x-Math.floor(x);};
+function fit(){DPR=Math.min(window.devicePixelRatio||1,2);W=window.innerWidth;H=window.innerHeight;
+  cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0);
+  horizonY=H*0.66; if(charX===0)charX=W*0.5;}
+
+function stipple(x0,y0,w,h,ink,alpha,t){     // remplit un bloc en char-encre
+  const fs=Math.max(10,h/10); ctx.font=`${fs}px ${FONT}`;
+  const cw=ctx.measureText('▓').width||fs*0.6;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  for(let y=y0+fs/2;y<y0+h;y+=fs) for(let x=x0+cw/2;x<x0+w;x+=cw){
+    const n=0.5+0.5*Math.sin(x*0.5+y*0.3)*Math.sin(y*0.2+1.0);
+    const idx=2+Math.round(n*2); const ch=RAMP[Math.min(RAMP.length-1,idx)];
+    ctx.fillStyle=rgba(ink,alpha*(0.7+0.3*n)); ctx.fillText(ch,x,y);
+  }
+}
+
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000);last=now;const t=(now-t0)/1000;
+  let dir=0; if(keys['arrowleft']||keys['a'])dir-=1; if(keys['arrowright']||keys['d'])dir+=1;
+  vx+=(dir*W*0.16-vx)*0.15; charX+=vx*dt;
+  const cam=charX;                          // la camera suit (parallax)
+  const ws=Math.min(1,Math.abs(vx)/(W*0.16));
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle=BG;ctx.fillRect(0,0,W,H);
+
+  // CIEL : lune + etoiles (couche la plus lente)
+  ctx.globalCompositeOperation='lighter';
+  const mx=W*0.78-cam*0.05, my=H*0.2;
+  let g=ctx.createRadialGradient(mx,my,0,mx,my,70);
+  g.addColorStop(0,rgba([240,238,225],0.5));g.addColorStop(0.2,rgba([240,238,225],0.25));g.addColorStop(1,rgba([240,238,225],0));
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(mx,my,70,0,Math.PI*2);ctx.fill();
+  for(let i=0;i<40;i++){const sx=((i*97.3-cam*0.04)%W+W)%W, sy=hash(i)*horizonY*0.7;
+    ctx.fillStyle=rgba([240,238,225],0.06+0.06*Math.sin(t*1.5+i)); ctx.fillRect(sx,sy,1.4,1.4);}
+  ctx.globalCompositeOperation='source-over';
+
+  // COLLINES lointaines (parallax lent)
+  ctx.fillStyle=rgba([40,44,58],0.9);
+  ctx.beginPath();ctx.moveTo(0,H);
+  for(let x=0;x<=W;x+=12){const wx=x+cam*0.2;
+    const hy=horizonY-30+34*Math.sin(wx*0.004)+18*Math.sin(wx*0.011+1.3);
+    ctx.lineTo(x,hy);} ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+
+  // MAISONS (couche principale, parallax 1.0) + depth alterne
+  const first=Math.floor((cam-W)/SP)-1, lastI=Math.ceil((cam+W)/SP)+1;
+  for(let i=first;i<=lastI;i++){
+    const sx=i*SP-cam+W/2; if(sx<-260||sx>W+260)continue;
+    const back=hash(i*7.1)>0.55;                 // certaines en retrait (profondeur)
+    const hw=70+Math.floor(hash(i)*60), hh=80+Math.floor(hash(i*3.3)*90)*(back?0.7:1);
+    const baseY=horizonY-(back?26:0), depthA=back?0.55:0.85;
+    const x0=sx-hw/2, y0=baseY-hh;
+    const ink=lerpC(INK, [60,64,80], back?0.45:0.15);
+    // corps
+    stipple(x0,y0,hw,hh,ink,depthA,t);
+    // toit
+    ctx.fillStyle=rgba(lerpC(INK,[40,40,52],0.3),depthA);
+    ctx.beginPath();ctx.moveTo(x0-8,y0);ctx.lineTo(sx,y0-hh*0.34);ctx.lineTo(x0+hw+8,y0);ctx.closePath();ctx.fill();
+    // fenetres chaudes
+    const lit=hash(i*5.7)>0.25;
+    if(lit){const cols2=hw>110?3:2;
+      for(let wxn=0;wxn<cols2;wxn++)for(let wyn=0;wyn<2;wyn++){
+        const fx=x0+hw*(0.25+0.5*wxn/(cols2-1||1)), fy=y0+hh*(0.30+0.34*wyn);
+        const fl=0.7+0.3*Math.sin(t*3+i+wxn+wyn);
+        ctx.globalCompositeOperation='lighter';
+        const gg=ctx.createRadialGradient(fx,fy,0,fx,fy,16);
+        gg.addColorStop(0,rgba(WARM,0.55*fl*depthA));gg.addColorStop(1,rgba(WARM,0));
+        ctx.fillStyle=gg;ctx.beginPath();ctx.arc(fx,fy,16,0,Math.PI*2);ctx.fill();
+        ctx.globalCompositeOperation='source-over';
+        ctx.fillStyle=rgba([255,225,170],0.7*depthA);ctx.fillRect(fx-3,fy-3,6,6);
+      }
+      // fumee de cheminee
+      ctx.globalCompositeOperation='lighter';
+      for(let s=0;s<5;s++){const sm=(t*0.4+s*0.2+hash(i))%1;
+        const smx=x0+hw*0.7+Math.sin(sm*6+i)*8, smy=y0-hh*0.34-sm*60;
+        ctx.fillStyle=rgba([180,180,190],0.05*(1-sm)); ctx.beginPath();ctx.arc(smx,smy,3+sm*6,0,Math.PI*2);ctx.fill();}
+      ctx.globalCompositeOperation='source-over';
+    }
+  }
+
+  // RUE : sol en perspective (rangees plus denses vers le bas), defile
+  const fs=H/40; ctx.font=`${fs}px ${FONT}`; const cw=ctx.measureText('▓').width||fs*0.6;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  for(let y=horizonY;y<H;y+=fs){const dep=(y-horizonY)/(H-horizonY);
+    for(let x=cw/2;x<W;x+=cw){const wx=x+cam*(0.6+dep*0.8);
+      const n=0.5+0.5*Math.sin(wx*0.05+y*0.2)*Math.sin(y*0.1);
+      const d=(0.2+0.5*dep)*(0.7+0.3*n);
+      const ch=RAMP[Math.max(0,Math.min(RAMP.length-1,Math.round(d*(RAMP.length-1))))];
+      if(ch===' ')continue; ctx.fillStyle=rgba([90,84,74],0.5*dep+0.1); ctx.fillText(ch,x,y);}}
+
+  // PREMIER PLAN : barriere (parallax rapide)
+  const fgcam=cam*1.5, fy=H*0.9;
+  ctx.strokeStyle=rgba([20,20,28],0.95);ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(0,fy);ctx.lineTo(W,fy);ctx.stroke();
+  for(let i=-2;i<60;i++){const px=i*70-((fgcam)%70);ctx.beginPath();ctx.moveTo(px,fy-26);ctx.lineTo(px,fy+30);ctx.stroke();}
+
+  // la presence qui marche dans la rue (reste centree, camera suit)
+  const px=W/2, py=horizonY+ (H-horizonY)*0.42 + (ws>0.1?-Math.abs(Math.sin(t*7))*4:0);
+  ctx.globalCompositeOperation='lighter';
+  const pulse=0.5+0.5*Math.sin(t*2.2);
+  const gp=ctx.createRadialGradient(px,py,0,px,py,20+5*pulse);
+  gp.addColorStop(0,rgba([248,237,212],0.85));gp.addColorStop(0.4,rgba(WARM,0.4));gp.addColorStop(1,rgba(WARM,0));
+  ctx.fillStyle=gp;ctx.beginPath();ctx.arc(px,py,20+5*pulse,0,Math.PI*2);ctx.fill();
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=rgba([255,247,224],0.95);ctx.beginPath();ctx.arc(px,py,2.4,0,Math.PI*2);ctx.fill();
+
+  ctx.font=`400 13px ${FONT}`;ctx.textAlign='center';ctx.fillStyle='rgba(201,187,163,0.30)';
+  ctx.fillText('← / → : arpenter le village  ·  parallax : ciel, collines, maisons, barrière',W/2,H-26);
+  requestAnimationFrame(frame);
+}
+addEventListener('resize',fit);
+addEventListener('pointermove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.has=true;});
+addEventListener('pointerleave',()=>{mouse.has=false;});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if(k.startsWith('arrow'))e.preventDefault();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+fit();requestAnimationFrame(frame);
+</script>
+</body>
+</html>

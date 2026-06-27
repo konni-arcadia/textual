@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — marque</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0d0c10;overflow:hidden;cursor:none;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- a toucher ----
+const BG="#0d0c10", INK_DRY="#8f8576";
+const RADIUS=150;   // portee du regard (px)
+// noms = placeholders, a remplacer
+// -------------------
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR;
+let mouse={x:-9999,y:-9999,has:false};
+const t0=performance.now();
+
+function lerpC(a,b,k){const A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16);
+  const ar=(A>>16)&255,ag=(A>>8)&255,ab=A&255,br=(B>>16)&255,bg=(B>>8)&255,bb=B&255;
+  return [Math.round(ar+(br-ar)*k),Math.round(ag+(bg-ag)*k),Math.round(ab+(bb-ab)*k)];}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+// sigils : marques abstraites tracees au trait
+function sigA(s){
+  ctx.beginPath(); ctx.arc(0,0,s*0.6,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-s*0.6); ctx.lineTo(0,s*0.6); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,-s*0.98,s*0.09,0,Math.PI*2); ctx.fill();
+}
+function sigB(s){
+  ctx.beginPath(); ctx.arc(0,0,s*0.6,Math.PI*0.35,Math.PI*1.65); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s*0.52,-s*0.42); ctx.lineTo(s*0.98,-s*0.72); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s*0.52, s*0.42); ctx.lineTo(s*0.98, s*0.72); ctx.stroke();
+}
+function sigC(s){
+  ctx.beginPath(); ctx.moveTo(0,-s*0.72); ctx.lineTo(s*0.62,s*0.5); ctx.lineTo(-s*0.62,s*0.5); ctx.closePath(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-s*0.42,0); ctx.lineTo(s*0.42,0); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,s*0.06,s*0.08,0,Math.PI*2); ctx.fill();
+}
+
+const pres=[
+  {name:"Vael",  x:0.28, y:0.44, sig:sigA, wet:"#f8edd4", ph:0.0, rot:0.2},
+  {name:"Ysore", x:0.50, y:0.60, sig:sigB, wet:"#f6e2da", ph:1.7, rot:-0.5},
+  {name:"Khol",  x:0.72, y:0.42, sig:sigC, wet:"#e9ecdf", ph:3.1, rot:0.8},
+];
+
+function fit(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=window.innerWidth; H=window.innerHeight;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+
+function frame(now){
+  const t=(now-t0)/1000;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H*0.5,0,W/2,H*0.5,Math.max(W,H)*0.8);
+  vg.addColorStop(0,'rgba(54,40,28,0.13)'); vg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+
+  const fade=Math.min(1,t/1.6), s=Math.min(W,H)*0.055;
+
+  // fils ténus entre les presences (relations latentes)
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<pres.length;i++) for(let j=i+1;j<pres.length;j++){
+    const a=pres[i], b=pres[j];
+    ctx.strokeStyle=rgba([120,104,80], 0.05*fade); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(a.x*W,a.y*H); ctx.lineTo(b.x*W,b.y*H); ctx.stroke();
+  }
+  ctx.globalCompositeOperation='source-over';
+
+  for(const p of pres){
+    const px=p.x*W, py=p.y*H;
+    let w=0;
+    if(mouse.has){ const dx=px-mouse.x, dy=py-mouse.y, dd=Math.hypot(dx,dy);
+      if(dd<RADIUS){ w=1-dd/RADIUS; w*=w; } }
+    const breath=0.85+0.15*Math.sin(t*0.7+p.ph);
+    const ink=lerpC(INK_DRY,p.wet,0.12+0.88*w);
+    const aBase=(0.5+0.45*w)*breath*fade;
+
+    // sigil
+    ctx.save();
+    ctx.translate(px, py-s*0.5);
+    ctx.rotate(p.rot + t*0.04*(0.3+w*2));
+    ctx.lineCap='round'; ctx.lineJoin='round'; ctx.lineWidth=2+w*1.6;
+    ctx.strokeStyle=rgba(ink,aBase); ctx.fillStyle=rgba(ink,aBase);
+    ctx.shadowColor=rgba(p.wet,1); ctx.shadowBlur=4+w*18;
+    p.sig(s);
+    ctx.restore();
+
+    // nom
+    ctx.shadowColor=rgba(p.wet,1); ctx.shadowBlur=w*8;
+    ctx.font=`400 ${s*0.62}px 'EB Garamond', Georgia, serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=rgba(ink,(0.28+0.6*w)*breath*fade);
+    ctx.fillText(p.name, px, py+s*1.05);
+    ctx.shadowBlur=0;
+  }
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', fit);
+addEventListener('pointermove', e=>{mouse.x=e.clientX; mouse.y=e.clientY; mouse.has=true;});
+addEventListener('pointerleave', ()=>{mouse.has=false;});
+fit(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
