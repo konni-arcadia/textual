@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — séparé</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#07060a;overflow:hidden;cursor:default;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ---- à toucher ----
+const TITLE        = "LES MILLE SOUVENIRS";    // la chose aimée
+const SUB_CRT      = "appuyer pour commencer";  // ce qu'on croit faire
+const CAPTION_FLAT = "les mêmes caractères.";   // ce qui reste
+const PHOSPHOR     = [255,176,92];   // l'encre vivante du tube
+const FLAT_INK     = [22,21,26];     // le texte mort
+const FLAT_CARD    = [233,231,226];  // la carte stérile
+const SOUND        = true;
+const STRIP_DUR    = 0.75;           // durée du retrait du corps (s)
+const INTRO_DUR    = 1.1;            // allumage du tube (s)
+// -------------------
+
+const FONT="'EB Garamond',Georgia,serif", MONO="ui-monospace,Consolas,monospace";
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,DPR, S,sg;            // S = écran hors-champ (le contenu du tube)
+let state=0, morph=0;        // state: 0 tube / 1 plat ; morph suit state
+let t0=performance.now(), last=t0, intro=0, scan=null;
+
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const mix=(a,b,k)=>a+(b-a)*k;
+const sstep=(a,b,x)=>{x=clamp((x-a)/(b-a),0,1);return x*x*(3-2*x);};
+const rgba=(c,a)=>`rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${a})`;
+const hash=(x)=>{const v=Math.sin(x*127.1)*43758.5;return v-Math.floor(v);};
+
+function fit(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=innerWidth; H=innerHeight;
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  S=document.createElement('canvas'); S.width=W*DPR; S.height=H*DPR;
+  sg=S.getContext('2d'); sg.setTransform(DPR,0,0,DPR,0,0);
+}
+
+// ---- contenu du tube : texte + halo de phosphore ----
+function drawScreen(t){
+  sg.setTransform(DPR,0,0,DPR,0,0);
+  sg.clearRect(0,0,W,H);
+  sg.fillStyle='#070504'; sg.fillRect(0,0,W,H);
+  const g=sg.createRadialGradient(W/2,H*0.5,0,W/2,H*0.5,Math.max(W,H)*0.7);
+  g.addColorStop(0,'rgba(40,26,12,0.55)'); g.addColorStop(1,'rgba(4,3,2,0)');
+  sg.fillStyle=g; sg.fillRect(0,0,W,H);
+
+  const breath=0.9+0.1*Math.sin(t*1.4);
+  const ink=PHOSPHOR.map(v=>v*breath);
+  let size=clamp(W*0.085,28,96);
+  sg.font=`500 ${size}px ${FONT}`;
+  let w=sg.measureText(TITLE).width; const maxW=W*0.8;
+  if(w>maxW){ size*=maxW/w; sg.font=`500 ${size}px ${FONT}`; }
+  sg.textAlign='center'; sg.textBaseline='middle';
+  const cx=W/2, cy=H*0.46;
+  // bloom additif derrière le titre
+  sg.globalCompositeOperation='lighter';
+  const bl=sg.createRadialGradient(cx,cy,0,cx,cy,size*2.2);
+  bl.addColorStop(0,rgba(ink,0.22)); bl.addColorStop(1,rgba(ink,0));
+  sg.fillStyle=bl; sg.fillRect(0,0,W,H);
+  // halo de phosphore, plusieurs passes
+  sg.shadowColor=rgba(ink,1);
+  for(const b of [22,12,5]){ sg.shadowBlur=b; sg.fillStyle=rgba(ink,0.5); sg.fillText(TITLE,cx,cy); }
+  sg.shadowBlur=0; sg.globalCompositeOperation='source-over';
+  // trait net
+  sg.fillStyle=rgba(ink,0.96); sg.fillText(TITLE,cx,cy);
+  // sous-titre clignotant
+  const blink=0.5+0.5*Math.sin(t*3.2);
+  sg.font=`400 ${size*0.26}px ${MONO}`;
+  sg.fillStyle=rgba(ink,0.5*blink+0.12);
+  sg.fillText(SUB_CRT.toUpperCase(), cx, cy+size*1.15);
+}
+
+// ---- blit bombé : la courbure du verre, et l'allumage ----
+function blitCurved(amt,open,alpha){
+  const cy=H/2, bands=140, bh=H/bands;
+  ctx.globalAlpha=alpha;
+  for(let i=0;i<bands;i++){
+    const sy=i*bh, yy=(sy/H)*2-1;
+    const sx=1-amt*0.07*yy*yy;                 // resserrement horizontal aux bords
+    const dw=W*sx, dx=(W-dw)/2;
+    let dy=sy + (yy<0?1:-1)*amt*9*yy*yy;        // bords ramenés vers le centre
+    dy=cy+(dy-cy)*open;                          // ouverture depuis la ligne médiane
+    const dh=bh*open+0.6;
+    ctx.drawImage(S, 0, sy*DPR, S.width, bh*DPR+1, dx, dy, dw, dh);
+  }
+  ctx.globalAlpha=1;
+}
+
+function buildScan(){
+  const k=document.createElement('canvas'); k.width=4; k.height=4;
+  const g=k.getContext('2d');
+  g.fillStyle='rgba(0,0,0,0.5)'; g.fillRect(0,0,4,2);  // une ligne sur deux
+  scan=ctx.createPattern(k,'repeat');
+}
+
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const t=(now-t0)/1000;
+  intro=clamp(intro+dt/INTRO_DUR,0,1);
+  morph += (state-morph)*clamp(dt/STRIP_DUR*3,0,1);
+  const body=1-sstep(0,1,morph);     // 1 = corps plein, 0 = plat
+  const open=sstep(0,1,intro);
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle='#07060a'; ctx.fillRect(0,0,W,H);
+
+  // ---- couche tube ----
+  if(body>0.01){
+    drawScreen(t);
+    const flick=0.92+0.08*hash(Math.floor(t*60));
+    const flash=intro<1?(1-intro):0;
+    blitCurved(body, open, body*flick);
+    if(scan){ ctx.globalAlpha=0.20*body*open; ctx.fillStyle=scan; ctx.fillRect(0,0,W,H); ctx.globalAlpha=1; }
+    // bande de rafraîchissement
+    const by=((t*0.18)%1)*H;
+    ctx.globalCompositeOperation='lighter';
+    const rb=ctx.createLinearGradient(0,by-40,0,by+40);
+    rb.addColorStop(0,'rgba(255,200,140,0)'); rb.addColorStop(0.5,rgba(PHOSPHOR,0.05*body)); rb.addColorStop(1,'rgba(255,200,140,0)');
+    ctx.fillStyle=rb; ctx.fillRect(0,by-40,W,80);
+    if(flash>0){ ctx.fillStyle=rgba([255,230,200],flash*0.5); ctx.fillRect(0,0,W,H); }
+    ctx.globalCompositeOperation='source-over';
+    // vignettage du verre
+    const vg=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.2,W/2,H/2,Math.max(W,H)*0.62);
+    vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,rgba([0,0,0],0.7*body));
+    ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+  }
+
+  // ---- couche plate ----
+  if(body<0.99){
+    const a=1-body;
+    let size=clamp(W*0.085,28,96);
+    ctx.font=`500 ${size}px ${FONT}`;
+    let w=ctx.measureText(TITLE).width; const maxW=W*0.8;
+    if(w>maxW){ size*=maxW/w; ctx.font=`500 ${size}px ${FONT}`; w=ctx.measureText(TITLE).width; }
+    const cx=W/2, cy=H*0.46;
+    const cw=Math.min(W*0.86, w+size*1.6), ch=size*2.2, cxx=cx-cw/2, cyy=cy-ch/2;
+    ctx.globalAlpha=a;
+    // la carte stérile
+    ctx.fillStyle=rgba(FLAT_CARD,1);
+    ctx.beginPath(); ctx.roundRect(cxx,cyy,cw,ch,10); ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.roundRect(cxx+0.5,cyy+0.5,cw-1,ch-1,10); ctx.stroke();
+    // texte mort, net, centré
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=rgba(FLAT_INK,1); ctx.fillText(TITLE,cx,cy);
+    ctx.globalAlpha=1;
+    // légende froide
+    const ca=sstep(0.5,0.95,1-body);
+    if(ca>0 && CAPTION_FLAT){
+      ctx.font=`italic 400 ${clamp(W*0.018,13,20)}px ${FONT}`;
+      ctx.fillStyle=rgba([150,146,140],ca);
+      ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+      ctx.fillText(CAPTION_FLAT, cx, cyy+ch+clamp(W*0.04,28,52));
+    }
+  }
+
+  // ---- aide ----
+  ctx.font=`400 12px ${MONO}`; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='rgba(150,142,130,0.34)';
+  ctx.fillText('clic / espace  ·  retirer le corps        m  ·  son        r  ·  rallumer', W/2, H-22);
+
+  audioLevel(body);
+  requestAnimationFrame(frame);
+}
+
+// ---- le son du tube : ronflement + sifflement de retour-ligne ----
+let actx,gain,started=false,muted=false;
+function startAudio(){
+  if(started||!SOUND) return; started=true;
+  try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
+  gain=actx.createGain(); gain.gain.value=0; gain.connect(actx.destination);
+  const hum=actx.createOscillator(); hum.type='sine'; hum.frequency.value=108;
+  const hg=actx.createGain(); hg.gain.value=0.6; hum.connect(hg).connect(gain);
+  const wh=actx.createOscillator(); wh.type='sine'; wh.frequency.value=9400;
+  const wg=actx.createGain(); wg.gain.value=0.05; wh.connect(wg).connect(gain);
+  hum.start(); wh.start();
+}
+function audioLevel(body){
+  if(!started||!actx) return;
+  gain.gain.setTargetAtTime(muted?0:body*0.07, actx.currentTime, 0.06);
+}
+
+function toggle(){ startAudio(); state = state?0:1; }
+addEventListener('pointerdown', toggle);
+addEventListener('keydown', e=>{
+  if(e.code==='Space'){ e.preventDefault(); toggle(); }
+  else if(e.key==='m'||e.key==='M'){ startAudio(); muted=!muted; }
+  else if(e.key==='r'||e.key==='R'){ startAudio(); state=0; intro=0; }
+});
+addEventListener('resize', ()=>{ fit(); buildScan(); });
+fit(); buildScan();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
