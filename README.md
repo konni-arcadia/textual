@@ -18,6 +18,9 @@ Chaque fichier est autonome : on l'ouvre directement dans un navigateur, ou via 
 ### Spikes
 Décors (`clairiere`, `donjon`, `ruelle`, `place`, `village`), échelles et caméras (`carte`, `scene`, `recul`, `scroll-*`), présences (`marque`, `fantome`, `perso`), matière du texte (`fremir`, `matiere`), le corps (`separe`), le volume (`voxel`, `tileset`).
 
+### Pistes ouvertes
+Ombres portées dans le voxel, auto-tuiles (raccords herbe/terre à la SNES), l'écran comme tilemap fixe (grille de cellules 16×16, l'analogue exact de la grille d'un terminal), un sprite animé qui marche sur le diorama, une rampe de lettres — le monde écrit en mots.
+
 ## Commandes
 
 - **Souris** : avive / mouille l'encre.
