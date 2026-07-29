@@ -16,7 +16,7 @@ Chaque fichier est autonome : on l'ouvre directement dans un navigateur, ou via 
 - **`trailer.html`** — *Les Mille Souvenirs*, un mini-trailer JRPG inventé.
 
 ### Spikes
-Décors (`clairiere`, `donjon`, `ruelle`, `place`, `village`), échelles et caméras (`carte`, `scene`, `recul`, `scroll-*`), présences (`marque`, `fantome`, `perso`), matière du texte (`fremir`, `matiere`), le corps (`separe`).
+Décors (`clairiere`, `donjon`, `ruelle`, `place`, `village`), échelles et caméras (`carte`, `scene`, `recul`, `scroll-*`), présences (`marque`, `fantome`, `perso`), matière du texte (`fremir`, `matiere`), le corps (`separe`), le volume (`voxel`, `tileset`).
 
 ## Commandes
 

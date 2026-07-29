@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spike — tileset</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0d0c10;overflow:hidden;}
+  canvas{display:block;cursor:grab;}
+  canvas.drag{cursor:grabbing;}
+  #hint{position:fixed;left:0;right:0;bottom:18px;text-align:center;pointer-events:none;
+    font-family:'EB Garamond',Georgia,serif;font-style:italic;font-size:15px;color:#6c6578;}
+  #hint b{color:#a99e88;font-style:normal;font-weight:500;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><b>glisser</b> — orbiter · <b>molette</b> — approcher · <b>T</b> — mosaïque / mode 7 / encre / matière · <b>P</b> — la planche · <b>R</b> — autre monde</div>
+<script>
+// ---- a toucher ----
+const SX = 44, SY = 18, SZ = 44;          // taille du monde
+const WL = 4;                              // niveau de l'eau
+const SUN = norm([0.55, 0.8, 0.35]);       // direction du soleil
+const BG  = '#0d0c10';
+const TILE = 16, SHADES = 6;               // taille des tuiles, paliers d'ombrage
+const RAMP = '·:░▒▓';                      // pour le mode encre
+const GLYPH_FONT = 'ui-monospace, Consolas, monospace';
+// palettes SNES : 4 tons par matiere, du sombre au clair
+const PALS = {
+  grass:[[38,86,46],[62,122,58],[95,158,74],[138,196,98]],
+  earth:[[64,42,30],[100,66,44],[134,94,62],[168,126,86]],
+  stone:[[52,52,68],[86,86,104],[122,122,140],[164,164,180]],
+  sand: [[142,112,66],[184,152,96],[216,188,128],[240,220,168]],
+  trunk:[[46,30,20],[76,50,32],[104,72,44],[132,96,60]],
+  leaf: [[22,58,34],[40,92,46],[64,128,58],[96,164,78]],
+  water:[[24,46,92],[36,72,132],[56,104,172],[104,160,216]],
+};
+// -------------------
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W, H, DPR;
+
+function norm(v){ const l=Math.hypot(v[0],v[1],v[2]); return [v[0]/l, v[1]/l, v[2]/l]; }
+
+// ---- la planche de tuiles, dessinee par le code ----
+// tiles[matiere][ombre][frame] -> canvas 16x16
+const MATS = ['grass','earth','stone','sand','trunk','leaf','water'];
+const tiles = {};
+
+function thash(x,y,s){ const h = Math.sin(x*127.1 + y*311.7 + s*74.7)*43758.5453; return h - Math.floor(h); }
+
+// chaque motif renvoie un index 0..3 dans la palette de la matiere
+const PATTERNS = {
+  grass(x,y,f){
+    const n = thash(x,y,1);
+    if(n > 0.93) return 3;                                    // brins clairs
+    if(n > 0.90 && y>0 && thash(x,y-1,1) > 0.93) return 3;    // le brin monte
+    if(n < 0.14) return 0;
+    return n < 0.62 ? 1 : 2;
+  },
+  earth(x,y,f){
+    const n = thash(x,y,2), blob = thash(x>>2, y>>2, 2.5);    // mottes 4x4
+    if(blob < 0.3 && n < 0.7) return 0;
+    if(n > 0.92) return 3;
+    return n < 0.4 ? 1 : 2;
+  },
+  stone(x,y,f){
+    const crack = thash(0, y>>2, 3) * TILE;                   // fissures par bandes
+    if(Math.abs(x - crack) < 1 && thash(x,y,3.5) < 0.7) return 0;
+    const n = thash(x,y,3);
+    if(n > 0.93) return 3;
+    return n < 0.25 ? 1 : 2;
+  },
+  sand(x,y,f){
+    const n = thash(x,y,4);
+    if(n > 0.94) return 0;                                    // grains sombres epars
+    if(n < 0.08) return 3;
+    return n < 0.5 ? 1 : 2;
+  },
+  trunk(x,y,f){
+    const g = thash(x,0,5);                                   // stries verticales
+    if(g < 0.22) return 0;
+    if(g > 0.9) return 3;
+    return thash(x,y,5.5) < 0.25 ? 1 : 2;
+  },
+  leaf(x,y,f){
+    const clump = thash((x+1)>>1, (y+1)>>1, 6);               // touffes 2x2
+    if(clump > 0.82) return 3;
+    if(clump < 0.22) return 0;
+    return thash(x,y,6.5) < 0.5 ? 1 : 2;
+  },
+  water(x,y,f){
+    const w = Math.sin((x + f*5.3)*0.8 + y*1.9 + Math.sin(y*0.7)*2);
+    if(w > 0.82) return 3;                                    // cretes qui derivent
+    if(w > 0.45) return 2;
+    return w < -0.6 ? 0 : 1;
+  },
+};
+
+function buildTiles(){
+  for(const m of MATS){
+    const frames = m === 'water' ? 3 : 1;
+    tiles[m] = [];
+    for(let s=0;s<SHADES;s++){
+      const k = 0.38 + 0.62*s/(SHADES-1);        // palier d'ombre
+      const row = [];
+      for(let f=0;f<frames;f++){
+        const t = document.createElement('canvas'); t.width = t.height = TILE;
+        const tx = t.getContext('2d'), id = tx.createImageData(TILE,TILE);
+        for(let y=0;y<TILE;y++) for(let x=0;x<TILE;x++){
+          const c = PALS[m][PATTERNS[m](x,y,f)];
+          const i = (y*TILE+x)*4;
+          // l'ombre tire vers la nuit bleue, facon SNES
+          id.data[i]   = c[0]*k + 18*(1-k);
+          id.data[i+1] = c[1]*k + 20*(1-k);
+          id.data[i+2] = c[2]*k + 42*(1-k);
+          id.data[i+3] = 255;
+        }
+        tx.putImageData(id,0,0);
+        row.push(t);
+      }
+      tiles[m].push(row);
+    }
+  }
+}
+
+// ---- le monde (identique au spike voxel) ----
+const AIR=0, GRASS=1, EARTH=2, STONE=3, SAND=4, TRUNK=5, LEAF=6, WATER=7;
+const MAT_OF = [null,'grass','earth','stone','sand','trunk','leaf','water'];
+let vox, seed;
+const at = (x,y,z) => (x<0||y<0||z<0||x>=SX||y>=SY||z>=SZ) ? AIR : vox[x + SX*(z + SZ*y)];
+const solid = t => t !== AIR && t !== WATER;
+
+function hash(x,z){ const h = Math.sin(x*127.1 + z*311.7 + seed*74.7)*43758.5453; return h - Math.floor(h); }
+function noise(x,z){
+  const xi=Math.floor(x), zi=Math.floor(z), xf=x-xi, zf=z-zi;
+  const u=xf*xf*(3-2*xf), v=zf*zf*(3-2*zf);
+  const a=hash(xi,zi), b=hash(xi+1,zi), c=hash(xi,zi+1), d=hash(xi+1,zi+1);
+  return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v;
+}
+const fbm = (x,z) => noise(x,z)*0.55 + noise(x*2.1,z*2.1)*0.28 + noise(x*4.3,z*4.3)*0.17;
+
+function generate(){
+  seed = Math.random()*1000;
+  vox = new Uint8Array(SX*SY*SZ);
+  const set = (x,y,z,t)=>{ if(x>=0&&y>=0&&z>=0&&x<SX&&y<SY&&z<SZ) vox[x + SX*(z + SZ*y)] = t; };
+  const hmap = [];
+  for(let x=0;x<SX;x++) for(let z=0;z<SZ;z++){
+    const h = Math.max(1, Math.round(1.5 + fbm(x*0.07, z*0.07)*13));
+    hmap[x + SX*z] = h;
+    for(let y=0;y<=h;y++){
+      let t = STONE;
+      if(y===h)          t = h <= WL+1 ? SAND : GRASS;
+      else if(y > h-3)   t = EARTH;
+      set(x,y,z,t);
+    }
+    for(let y=h+1;y<=WL;y++) set(x,y,z,WATER);
+  }
+  for(let i=0;i<24;i++){
+    const x = 3+Math.floor(hash(i*13.7, i*7.1)*(SX-6));
+    const z = 3+Math.floor(hash(i*5.3, i*17.9)*(SZ-6));
+    const h = hmap[x + SX*z];
+    if(at(x,h,z) !== GRASS || h+7 >= SY) continue;
+    const th = 3 + Math.floor(hash(x,z)*3);
+    for(let y=1;y<=th;y++) set(x,h+y,z,TRUNK);
+    const cy = h+th+1;
+    for(let dx=-2;dx<=2;dx++) for(let dy=-2;dy<=2;dy++) for(let dz=-2;dz<=2;dz++)
+      if(dx*dx+dy*dy*1.6+dz*dz <= 4.8 && at(x+dx,cy+dy,z+dz)===AIR) set(x+dx,cy+dy,z+dz,LEAF);
+  }
+  buildFaces();
+}
+
+// ---- les faces exposees ----
+const DIRS = [
+  {n:[ 0, 1, 0], c:[[0,1,0],[1,1,0],[1,1,1],[0,1,1]]},
+  {n:[ 0,-1, 0], c:[[0,0,0],[1,0,0],[1,0,1],[0,0,1]]},
+  {n:[ 1, 0, 0], c:[[1,0,0],[1,1,0],[1,1,1],[1,0,1]]},
+  {n:[-1, 0, 0], c:[[0,0,0],[0,1,0],[0,1,1],[0,0,1]]},
+  {n:[ 0, 0, 1], c:[[0,0,1],[1,0,1],[1,1,1],[0,1,1]]},
+  {n:[ 0, 0,-1], c:[[0,0,0],[1,0,0],[1,1,0],[0,1,0]]},
+];
+const CX = SX/2, CY = SY*0.42, CZ = SZ/2;
+let faces = [];
+
+function faceAO(x,y,z,n){
+  const px=x+n[0], py=y+n[1], pz=z+n[2];
+  let occ = 0;
+  for(let a=-1;a<=1;a++) for(let b=-1;b<=1;b++){
+    if(a===0 && b===0) continue;
+    let cx=px, cy=py, cz=pz;
+    if(n[1]!==0){ cx+=a; cz+=b; } else if(n[0]!==0){ cy+=a; cz+=b; } else { cx+=a; cy+=b; }
+    if(solid(at(cx,cy,cz))) occ++;
+  }
+  return 1 - Math.min(occ,4)*0.09;
+}
+
+function buildFaces(){
+  faces = [];
+  for(let y=0;y<SY;y++) for(let z=0;z<SZ;z++) for(let x=0;x<SX;x++){
+    const t = at(x,y,z);
+    if(t===AIR) continue;
+    for(const d of DIRS){
+      const nb = at(x+d.n[0], y+d.n[1], z+d.n[2]);
+      if(t===WATER){ if(nb!==AIR) continue; }
+      else if(solid(nb)) continue;
+      const mat = (t===GRASS && d.n[1]!==1) ? 'earth' : MAT_OF[t];
+      const col = PALS[mat][2];
+      const jit = 0.92 + hash(x*3+y*7, z*5+y*11)*0.16;
+      faces.push({
+        n: d.n, water: t===WATER, mat, ao: faceAO(x,y,z,d.n),
+        col: [col[0]*jit, col[1]*jit, col[2]*jit],
+        cx: x+0.5+d.n[0]*0.5-CX, cy: y+0.5+d.n[1]*0.5-CY, cz: z+0.5+d.n[2]*0.5-CZ,
+        pts: d.c.map(p => [x+p[0]-CX, y+p[1]-CY, z+p[2]-CZ]),
+      });
+    }
+  }
+}
+
+// ---- camera & interaction ----
+const MODES = ['mosaique','mode7','encre','matiere'];
+let yaw = 0.7, pitch = 0.55, dist = 62, distT = 62, mode = 0, sheet = false;
+let dragging = false, lastX = 0, lastY = 0, lastTouch = 0;
+const t0 = performance.now();
+
+cv.addEventListener('pointerdown', e => { dragging=true; lastX=e.clientX; lastY=e.clientY; cv.classList.add('drag'); cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointermove', e => {
+  if(!dragging) return;
+  yaw   -= (e.clientX-lastX)*0.008;
+  pitch += (e.clientY-lastY)*0.006;
+  pitch  = Math.max(0.08, Math.min(1.35, pitch));
+  lastX=e.clientX; lastY=e.clientY; lastTouch = performance.now();
+});
+cv.addEventListener('pointerup', () => { dragging=false; cv.classList.remove('drag'); });
+window.addEventListener('wheel', e => { distT = Math.max(26, Math.min(130, distT + e.deltaY*0.05)); lastTouch = performance.now(); }, {passive:true});
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if(k==='t') mode = (mode+1)%MODES.length;
+  if(k==='p') sheet = !sheet;
+  if(k==='r') generate();
+});
+
+function fit(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  cv.style.width = W+'px'; cv.style.height = H+'px';
+}
+
+// ---- rendu ----
+const order = [], depth = [];
+
+function drawSheet(){
+  // la planche de tuiles, exposee comme dans un editeur d'antan
+  const sc = 3, pad = 10, cell = TILE*sc + 4;
+  const w = SHADES*cell + pad*2, h = MATS.length*cell + pad*2;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = 'rgba(13,12,16,0.92)';
+  ctx.fillRect(12, 12, w, h);
+  ctx.strokeStyle = '#2a2730'; ctx.strokeRect(12.5, 12.5, w, h);
+  for(let m=0;m<MATS.length;m++) for(let s=0;s<SHADES;s++){
+    ctx.drawImage(tiles[MATS[m]][s][0], 12+pad+s*cell, 12+pad+m*cell, TILE*sc, TILE*sc);
+  }
+}
+
+function frame(now){
+  const t = Math.max(0, (now - t0)/1000);   // le 1er timestamp rAF peut preceder t0
+  if(!dragging && now - lastTouch > 3000) yaw += 0.0018;
+  dist += (distT - dist)*0.12;              // zoom amorti, sans crans
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = BG; ctx.fillRect(0,0,W,H);
+  const vg = ctx.createRadialGradient(W/2,H*0.45,0, W/2,H*0.45, Math.max(W,H)*0.75);
+  vg.addColorStop(0,'rgba(54,40,28,0.14)'); vg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+
+  const cp=Math.cos(pitch), sp=Math.sin(pitch);
+  const eye = [dist*cp*Math.sin(yaw), dist*sp, dist*cp*Math.cos(yaw)];
+  const f = norm([-eye[0], -eye[1], -eye[2]]);
+  const r = norm([-f[2], 0, f[0]]);
+  const u = [r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0]];
+  const F = Math.min(W,H)*1.15;
+  const proj = p => {
+    const x=p[0]-eye[0], y=p[1]-eye[1], z=p[2]-eye[2];
+    const zc = x*f[0]+y*f[1]+z*f[2];
+    if(zc < 0.5) return null;
+    return [W/2 + (x*r[0]+y*r[1]+z*r[2])*F/zc, H/2 - (x*u[0]+y*u[1]+z*u[2])*F/zc, zc];
+  };
+
+  order.length = 0;
+  for(let i=0;i<faces.length;i++){
+    const L = faces[i];
+    const vx=eye[0]-L.cx, vy=eye[1]-L.cy, vz=eye[2]-L.cz;
+    if(L.n[0]*vx + L.n[1]*vy + L.n[2]*vz <= 0) continue;
+    depth[i] = vx*vx + vy*vy + vz*vz;
+    order.push(i);
+  }
+  order.sort((a,b) => (depth[b] - depth[a]) || (a - b));   // departage stable : pas d'echange au frame suivant
+
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+
+  for(const i of order){
+    const L = faces[i];
+    const p0=proj(L.pts[0]), p1=proj(L.pts[1]), p2=proj(L.pts[2]), p3=proj(L.pts[3]);
+    if(!p0||!p1||!p2||!p3) continue;
+
+    let lum = (0.36 + 0.64*Math.max(0, L.n[0]*SUN[0]+L.n[1]*SUN[1]+L.n[2]*SUN[2])) * L.ao;
+    if(L.water) lum *= 1 + 0.1*Math.sin(t*2.2 + L.cx*0.9 + L.cz*0.7);
+
+    if(mode === 0){
+      // ---- mosaique : des tuiles-billboards, toujours face a la camera (comme ░▒▓) ----
+      ctx.setTransform(DPR,0,0,DPR,0,0);
+      ctx.beginPath();
+      ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.lineTo(p2[0],p2[1]); ctx.lineTo(p3[0],p3[1]);
+      ctx.closePath();
+      ctx.fillStyle = `rgb(${(L.col[0]*lum*0.16+7)|0},${(L.col[1]*lum*0.16+6)|0},${(L.col[2]*lum*0.16+9)|0})`;
+      ctx.fill();
+      const e1 = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
+      const e2 = Math.hypot(p3[0]-p0[0], p3[1]-p0[1]);
+      if(Math.max(e1,e2) < 2.5) continue;
+      // les faces rasantes s'eteignent en douceur au lieu d'etre coupees net
+      const vx = eye[0]-L.cx, vy = eye[1]-L.cy, vz = eye[2]-L.cz;
+      const facing = (L.n[0]*vx + L.n[1]*vy + L.n[2]*vz)/Math.sqrt(vx*vx+vy*vy+vz*vz);
+      let fA = (facing - 0.04)/0.26; fA = fA<0?0:(fA>1?1:fA); fA = fA*fA*(3-2*fA);
+      if(fA < 0.02) continue;
+      // l'aire projetee : les carreaux retrecissent quand la face se met de profil
+      const area = Math.abs((p1[0]-p0[0])*(p3[1]-p0[1]) - (p1[1]-p0[1])*(p3[0]-p0[0]));
+      // grille avec hysteresis, et fondu croise quand elle se redecoupe
+      const ex1 = e1/24, ex2 = e2/24;
+      const cl = v => Math.min(4, Math.max(1, Math.round(v)));
+      if(L.na === undefined){ L.na = cl(ex1); L.nb = cl(ex2); }
+      else if(!L.mix && (Math.abs(ex1 - L.na) > 0.75 || Math.abs(ex2 - L.nb) > 0.75)){
+        L.oldNa = L.na; L.oldNb = L.nb;
+        L.na = cl(ex1); L.nb = cl(ex2);
+        L.mix = t;                                   // debut du fondu ancienne -> nouvelle grille
+      }
+      let k = 1;
+      if(L.mix){
+        k = Math.min(1, (t - L.mix)/0.35);
+        k = k*k*(3-2*k);
+        if(k >= 1){ k = 1; L.mix = 0; }
+      }
+      const row = tiles[L.mat];
+      const weave = (na, nb, A) => {
+        const cs = Math.max(3, Math.round(Math.sqrt(area/(na*nb))*1.25));   // taille entiere : pas de scintillement sous-pixel
+        for(let a=0;a<na;a++) for(let b=0;b<nb;b++){
+          const sq=(a+0.5)/na, q=(b+0.5)/nb;
+          const gx = (p0[0]*(1-sq)+p1[0]*sq)*(1-q) + (p3[0]*(1-sq)+p2[0]*sq)*q;
+          const gy = (p0[1]*(1-sq)+p1[1]*sq)*(1-q) + (p3[1]*(1-sq)+p2[1]*sq)*q;
+          const l2 = lum*(0.82 + hash(i*3.1+a*7.7+na*29.3, i*5.3+b*13.1+nb*17.7)*0.36);
+          const sf = Math.max(0, Math.min(SHADES-1, l2*SHADES - 0.5));
+          const s0 = Math.floor(sf), sb = sf - s0;
+          const x0 = Math.round(gx-cs/2), y0 = Math.round(gy-cs/2);
+          if(L.water){
+            // l'eau fond entre ses trames
+            const wf = (t*2.5)%3, f0 = Math.floor(wf), fb = wf - f0;
+            const sr = Math.round(sf);
+            ctx.globalAlpha = A;
+            ctx.drawImage(row[sr][f0], x0, y0, cs, cs);
+            if(fb > 0.03){ ctx.globalAlpha = A*fb; ctx.drawImage(row[sr][(f0+1)%3], x0, y0, cs, cs); }
+          } else {
+            // ombre continue : fondu entre deux paliers adjacents
+            ctx.globalAlpha = A;
+            ctx.drawImage(row[s0][0], x0, y0, cs, cs);
+            if(sb > 0.03 && s0 < SHADES-1){ ctx.globalAlpha = A*sb; ctx.drawImage(row[s0+1][0], x0, y0, cs, cs); }
+          }
+        }
+      };
+      // l'ancienne grille reste opaque dessous, la nouvelle apparait dessus : pas de creux sombre
+      if(k < 1) weave(L.oldNa, L.oldNb, fA);
+      weave(L.na, L.nb, k >= 1 ? fA : k*fA);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+
+    if(mode === 1){
+      // ---- tuiles plaquees : mapping affine, comme le Mode 7 ----
+      const sf = Math.max(0, Math.min(SHADES-1, lum*SHADES - 0.5));
+      const s0 = Math.floor(sf), sb = sf - s0;
+      const row = tiles[L.mat];
+      if(L.water) ctx.globalAlpha = 0.85;
+      ctx.setTransform(
+        DPR*(p1[0]-p0[0])/TILE, DPR*(p1[1]-p0[1])/TILE,
+        DPR*(p3[0]-p0[0])/TILE, DPR*(p3[1]-p0[1])/TILE,
+        DPR*p0[0], DPR*p0[1]);
+      if(L.water){
+        const wf = (t*2.5)%3, f0 = Math.floor(wf), fb = wf - f0;
+        const sr = Math.round(sf);
+        ctx.drawImage(row[sr][f0], 0, 0);
+        if(fb > 0.03){ ctx.globalAlpha = 0.85*fb; ctx.drawImage(row[sr][(f0+1)%3], 0, 0); }
+      } else {
+        ctx.drawImage(row[s0][0], 0, 0);
+        if(sb > 0.03 && s0 < SHADES-1){ ctx.globalAlpha = sb; ctx.drawImage(row[s0+1][0], 0, 0); }
+      }
+      ctx.globalAlpha = 1;
+      continue;
+    }
+
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    ctx.beginPath();
+    ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.lineTo(p2[0],p2[1]); ctx.lineTo(p3[0],p3[1]);
+    ctx.closePath();
+
+    if(mode === 2){
+      // ---- encre : faces tissees de caracteres ----
+      ctx.fillStyle = `rgb(${(L.col[0]*lum*0.16+7)|0},${(L.col[1]*lum*0.16+6)|0},${(L.col[2]*lum*0.16+9)|0})`;
+      ctx.fill();
+      const e1 = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
+      const e2 = Math.hypot(p3[0]-p0[0], p3[1]-p0[1]);
+      if(Math.max(e1,e2) < 3) continue;
+      const na = Math.min(6, Math.max(1, Math.round(e1/16)));
+      const nb = Math.min(6, Math.max(1, Math.round(e2/16)));
+      const cs = Math.max(3, Math.min(e1/na*1.75, e2/nb*1.15));
+      ctx.font = `${cs|0}px ${GLYPH_FONT}`;
+      for(let a=0;a<na;a++) for(let b=0;b<nb;b++){
+        const sq=(a+0.5)/na, q=(b+0.5)/nb;
+        const gx = (p0[0]*(1-sq)+p1[0]*sq)*(1-q) + (p3[0]*(1-sq)+p2[0]*sq)*q;
+        const gy = (p0[1]*(1-sq)+p1[1]*sq)*(1-q) + (p3[1]*(1-sq)+p2[1]*sq)*q;
+        const l2 = Math.min(1, lum*(0.78 + hash(i*3.1+a*7.7, i*5.3+b*13.1)*0.44));
+        const ch = L.water ? '≈' : RAMP[Math.min(RAMP.length-1, Math.floor(l2*RAMP.length))];
+        ctx.fillStyle = `rgba(${L.col[0]|0},${L.col[1]|0},${L.col[2]|0},${Math.min(1, 0.3+l2*0.8)})`;
+        ctx.fillText(ch, gx, gy);
+      }
+    } else {
+      // ---- matiere : faces pleines ----
+      const c = `rgba(${(L.col[0]*lum)|0},${(L.col[1]*lum)|0},${(L.col[2]*lum)|0},${L.water?0.72:1})`;
+      ctx.fillStyle = c; ctx.fill();
+      ctx.strokeStyle = c; ctx.lineWidth = 0.8; ctx.stroke();
+    }
+  }
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  if(sheet) drawSheet();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', fit);
+fit();
+buildTiles();
+generate();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
